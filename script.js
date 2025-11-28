@@ -1,4 +1,4 @@
-// ====== 0. Firebase Modular imports (for browser modules) ======
+// ====== 0. Firebase Modular imports ======
 import { ref as dbRef, set as dbSet, get as dbGet, update as dbUpdate, onValue as dbOnValue } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
 import { database } from "./firebase-config.js";
 
@@ -22,7 +22,7 @@ const GAME_DATA = {
   }
 };
 
-// ====== 2. الترجمات (Text Mapping) ======
+// ====== 2. الترجمات ======
 const TEXTS = {
     "العربية": {
         title: "🎮 مَن في بالك؟",
@@ -46,7 +46,13 @@ const TEXTS = {
         enterOpponentCode: "أدخل رمز الخصم:",
         joinGame: "انضم للعبة",
         copying: "تم النسخ!",
-        waitingOpponentSetup: "ينتظر الخصم لإدخال عنصره السري"
+        waitingOpponentSetup: "ينتظر الخصم لإدخال عنصره السري",
+        incomingQuestion: "الخصم يسأل:",
+        youAsked: "أنت سألت:",
+        waitingAnswer: "(بانتظار الإجابة...)",
+        opponentAnswered: "الخصم أجاب:",
+        yes: "نعم",
+        no: "لا"
     },
     "English": {
         title: "🎮 Guess Who?",
@@ -70,13 +76,19 @@ const TEXTS = {
         enterOpponentCode: "Enter Opponent's Code:",
         joinGame: "Join Game",
         copying: "Copied!",
-        waitingOpponentSetup: "Waiting for opponent to enter secret item"
+        waitingOpponentSetup: "Waiting for opponent to enter secret item",
+        incomingQuestion: "Opponent asks:",
+        youAsked: "You asked:",
+        waitingAnswer: "(Waiting for answer...)",
+        opponentAnswered: "Opponent answered:",
+        yes: "Yes",
+        no: "No"
     }
 };
 
 // ====== 3. حالة اللعبة الشاملة ======
 let currentLang = 'العربية';
-let gameMode = null; // 'local' أو 'online'
+let gameMode = null; 
 let selectedCategory = '';
 let player1Secret = '';
 let player2Secret = '';
@@ -85,196 +97,37 @@ let gameActive = false;
 let isMyTurn = true;
 let myPlayerNumber = 1;
 let gameId = null;
-let askedQuestions = []; // قائمة الأسئلة المسؤول عنها
-let opponentAskedQuestions = []; // قائمة أسئلة الخصم
+let askedQuestions = [];
+let lastProcessedTimestamp = 0; 
 
-// ====== 4.5. Firebase helpers: generate game code + create game in DB ======
-function generateGameCode() {
-    // 6-character alphanumeric uppercase code
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-}
-
-async function createOnlineGame() {
-    try {
-        const gameCode = generateGameCode();
-        const gameRef = dbRef(database, `games/${gameCode}`);
-
-        // Initialize room with players object (empty initially)
-        await dbSet(gameRef, {
-            players: {},           // Important: initialize as empty object, not array
-            questions: [],
-            createdAt: Date.now()
-        });
-
-        // Update UI elements: input and big display
-        const codeInput = document.getElementById('gameCodeInput');
-        const bigDisplay = document.getElementById('game-code');
-        if (codeInput) codeInput.value = gameCode;
-        if (bigDisplay) bigDisplay.textContent = gameCode;
-
-        // Remember current game id locally
-        gameId = gameCode;
-        myPlayerNumber = 1;  // Creator is player 1
-
-        // Start real-time listener for 2nd player joining
-        listenToGameChanges(gameCode);
-
-        return gameCode;
-    } catch (err) {
-        console.error('Error creating online game:', err);
-        throw err;
-    }
-}
-
-// ====== 3.5. Firebase join game function ======
-async function joinGame(opponentCode) {
-    try {
-        const code = opponentCode.trim().toUpperCase();
-        if (!code) {
-            alert(TEXTS[currentLang].enterOpponentCode || "Please enter opponent's game code");
-            return;
-        }
-
-        const gameRef = dbRef(database, `games/${code}`);
-        const snapshot = await dbGet(gameRef);
-
-        if (!snapshot.exists()) {
-            alert(currentLang === 'العربية' ? "رمز اللعبة غير صحيح!" : "Invalid game code!");
-            return;
-        }
-
-        const gameData = snapshot.val();
-        const players = gameData.players || {};
-        const playerCount = Object.keys(players).length;
-
-        // Only allow 2 players max
-        if (playerCount >= 2) {
-            alert(currentLang === 'العربية' ? "العبة ممتلئة بالفعل!" : "Game is full!");
-            return;
-        }
-
-        // Add current player
-        myPlayerNumber = playerCount + 1;  // Player 1 or 2
-        const playerId = `player${Date.now()}`;
-        players[playerId] = {
-            playerNumber: myPlayerNumber,
-            joinedAt: Date.now()
-        };
-
-        // Update players in the game
-        await dbUpdate(gameRef, { players });
-
-        // Set game id and proceed
-        gameId = code;
-        elements.opponentCodeInput.value = '';
-
-        // Start real-time listener for opponent's moves
-        listenToGameChanges(code);
-
-        // Move to category selection
-        hideAllScreens();
-        elements.categorySelectionScreen.classList.remove('hidden');
-
-        return code;
-    } catch (err) {
-        console.error('Error joining game:', err);
-        alert(currentLang === 'العربية' ? "حدث خطأ أثناء الانضمام للعبة" : "Error joining game");
-    }
-}
-
-// ====== 3.6. Firebase real-time listener for game changes ======
-let gameListener = null;  // Store listener reference for cleanup
-
-function listenToGameChanges(code) {
-    try {
-        const gameRef = dbRef(database, `games/${code}`);
-
-        // Remove old listener if exists
-        if (gameListener) gameListener();
-
-        // Set up real-time listener
-        gameListener = dbOnValue(gameRef, (snapshot) => {
-            const data = snapshot.val();
-            if (!data) return;
-
-            const players = data.players || {};
-            const playerCount = Object.keys(players).length;
-
-            console.log(`🎮 Game ${code}: ${playerCount} player(s) connected`);
-
-            // Auto-start when 2 players connected
-            if (playerCount >= 2 && gameMode === 'online') {
-                // Stop listening to avoid duplicate triggers
-                if (gameListener) gameListener();
-                
-                // Wait a bit for data sync, then proceed
-                setTimeout(() => {
-                    startGameAfterCategory();
-                }, 500);
-            }
-        }, (error) => {
-            console.error('Listener error:', error);
-        });
-
-    } catch (err) {
-        console.error('Error setting up listener:', err);
-    }
-}
-
-// ====== 3.7. Cleanup listener on game end ======
-function stopGameListener() {
-    if (gameListener) {
-        gameListener();
-        gameListener = null;
-        console.log('🎮 Game listener stopped');
-    }
-}
-
-// ====== 4. العناصر الأساسية (DOM Elements) ======
+// ====== 4. Helper Elements & Modal Creation ======
+// نقوم بإنشاء نافذة الإجابة ديناميكياً لتجنب تعديل HTML
 const elements = {
     body: document.body,
     langToggle: document.getElementById('lang-toggle'),
     title: document.getElementById('title'),
-    
-    // Main Menu
     mainMenuScreen: document.getElementById('main-menu-screen'),
     localGameButton: document.getElementById('local-game-button'),
     onlineGameButton: document.getElementById('online-game-button'),
-    
-    // Category Selection
     categorySelectionScreen: document.getElementById('category-selection'),
-    catHeader: document.getElementById('cat-header'),
     categoryButtonsContainer: document.getElementById('category-buttons'),
     startPVPButton: document.getElementById('start-pvp-button'),
     backToMenuButton: document.getElementById('back-to-menu-button'),
-    
-    // Online Waiting
     onlineWaitingScreen: document.getElementById('online-waiting-screen'),
     gameCodeDisplay: document.getElementById('game-code'),
     copyCodeButton: document.getElementById('copy-code-button'),
     opponentCodeInput: document.getElementById('opponent-code-input'),
     joinGameButton: document.getElementById('join-game-button'),
     cancelOnlineButton: document.getElementById('cancel-online-button'),
-    
-    // Player Setup
     player1SetupScreen: document.getElementById('player1-setup-screen'),
-    p1Header: document.getElementById('p1-header'),
-    p1Instruction: document.getElementById('p1-instruction'),
     player1SecretInput: document.getElementById('player1-secret-input'),
     player1ConfirmButton: document.getElementById('player1-confirm-button'),
-    
     player2SetupScreen: document.getElementById('player2-setup-screen'),
-    p2Header: document.getElementById('p2-header'),
-    p2Instruction: document.getElementById('p2-instruction'),
     player2SecretInput: document.getElementById('player2-secret-input'),
     player2ConfirmButton: document.getElementById('player2-confirm-button'),
-    
-    // Game Screen
     gameScreen: document.getElementById('game-screen'),
-    gameHeader: document.getElementById('game-header'),
     currentPlayer: document.getElementById('current-player'),
     playerStatus: document.getElementById('player-status'),
-    instructionText: document.getElementById('instruction-text'),
     questionInput: document.getElementById('question-input'),
     askButton: document.getElementById('ask-button'),
     guessInput: document.getElementById('guess-input'),
@@ -282,79 +135,288 @@ const elements = {
     feedbackArea: document.getElementById('feedback-area'),
     duplicateWarning: document.getElementById('duplicate-warning'),
     askedQuestionsWarning: document.getElementById('asked-questions-warning'),
-    
-    // Result Screen
     resultScreen: document.getElementById('result-screen'),
     resultHeader: document.getElementById('result-header'),
     resultMessage: document.getElementById('result-message'),
     resultDetails: document.getElementById('result-details'),
     restartButton: document.getElementById('restart-button'),
-    
-    // Waiting for Opponent
     waitingOpponentScreen: document.getElementById('waiting-opponent-screen'),
     waitingMessage: document.getElementById('waiting-message')
 };
 
-// ====== 5. الوظائف الأساسية ======
+// إنشاء نافذة الإجابة (Modal) ديناميكياً
+function createAnswerModal() {
+    const modal = document.createElement('div');
+    modal.id = 'answer-modal';
+    modal.style.cssText = `
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.85); display: none; flex-direction: column;
+        justify-content: center; align-items: center; z-index: 1000;
+    `;
+    modal.innerHTML = `
+        <div style="background: #1a1a2e; padding: 30px; border: 2px solid #e94560; border-radius: 15px; text-align: center; max-width: 90%;">
+            <h2 id="modal-question-text" style="color: #fff; margin-bottom: 20px;"></h2>
+            <div style="display: flex; gap: 20px; justify-content: center;">
+                <button id="btn-yes" class="neon-button" style="background: #4CAF50;">نعم</button>
+                <button id="btn-no" class="neon-button" style="background: #f44336;">لا</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+}
+const answerModal = createAnswerModal();
+
+// ====== 5. Firebase Logic ======
+
+function generateGameCode() {
+    return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+async function createOnlineGame() {
+    const gameCode = generateGameCode();
+    const gameRef = dbRef(database, `games/${gameCode}`);
+    
+    await dbSet(gameRef, {
+        players: {},
+        createdAt: Date.now(),
+        status: 'waiting'
+    });
+
+    const codeInput = document.getElementById('gameCodeInput');
+    if (codeInput) codeInput.value = gameCode;
+    elements.gameCodeDisplay.textContent = gameCode;
+
+    gameId = gameCode;
+    myPlayerNumber = 1;
+    isMyTurn = true; // اللاعب 1 يبدأ دائماً
+
+    listenToGameChanges(gameCode);
+    return gameCode;
+}
+
+async function joinGame(opponentCode) {
+    const code = opponentCode.trim().toUpperCase();
+    if (!code) return alert(TEXTS[currentLang].enterOpponentCode);
+
+    const gameRef = dbRef(database, `games/${code}`);
+    const snapshot = await dbGet(gameRef);
+
+    if (!snapshot.exists()) return alert("Code not found!");
+    
+    const data = snapshot.val();
+    const players = data.players || {};
+    if (Object.keys(players).length >= 2) return alert("Game full!");
+
+    myPlayerNumber = 2;
+    isMyTurn = false; // اللاعب 2 ينتظر
+    const playerId = `player${Date.now()}`;
+    
+    players[playerId] = { number: 2, joinedAt: Date.now() };
+    await dbUpdate(gameRef, { players });
+
+    gameId = code;
+    elements.opponentCodeInput.value = '';
+    listenToGameChanges(code);
+    hideAllScreens();
+    elements.categorySelectionScreen.classList.remove('hidden');
+}
+
+// === إرسال الأحداث لـ Firebase ===
+async function sendAction(type, content) {
+    if (!gameId) return;
+    const gameRef = dbRef(database, `games/${gameId}`);
+    
+    await dbUpdate(gameRef, {
+        lastAction: {
+            type: type, // 'question', 'answer', 'guess', 'end'
+            content: content,
+            sender: myPlayerNumber,
+            timestamp: Date.now()
+        }
+    });
+}
+
+// === الاستماع للتغييرات ===
+let gameListener = null;
+
+function listenToGameChanges(code) {
+    const gameRef = dbRef(database, `games/${code}`);
+    if (gameListener) gameListener();
+
+    gameListener = dbOnValue(gameRef, (snapshot) => {
+        const data = snapshot.val();
+        if (!data) return;
+
+        // 1. مزامنة حالة اللاعبين وبدء اللعبة
+        const players = data.players || {};
+        if (Object.keys(players).length >= 2 && gameMode === 'online' && !gameActive) {
+            // ننتظر قليلاً للتأكد من التزامن ثم ننتقل للشاشة التالية
+            if (elements.onlineWaitingScreen.classList.contains('hidden') === false) {
+                 setTimeout(() => startGameAfterCategory(), 500);
+            }
+        }
+
+        // 2. تحديث الأسرار (Secrets)
+        if (data.p1Secret) player1Secret = data.p1Secret;
+        if (data.p2Secret) player2Secret = data.p2Secret;
+
+        // التحقق من اكتمال الإعداد للبدء
+        if (player1Secret && player2Secret && !gameActive && elements.player2SetupScreen.classList.contains('hidden')) {
+             // إذا كنا في شاشات الانتظار، ابدأ اللعبة
+             startGameScreen();
+        } else if (player1Secret && myPlayerNumber === 2 && !player2Secret && elements.waitingOpponentScreen.classList.contains('hidden') === false) {
+             // اللاعب 1 وضع سره، الآن دور اللاعب 2 (يجب أن ينتقل اللاعب 2 لشاشة الإعداد)
+             // تم التعامل مع هذا في منطق setSecret
+        }
+
+        // 3. معالجة الأحداث (Questions/Answers)
+        if (data.lastAction && data.lastAction.timestamp > lastProcessedTimestamp) {
+            handleIncomingAction(data.lastAction);
+            lastProcessedTimestamp = data.lastAction.timestamp;
+        }
+    });
+}
+
+function handleIncomingAction(action) {
+    const textMap = TEXTS[currentLang];
+    
+    // تجاهل الأحداث القديمة أو التي أرسلتها أنا (إلا إذا كانت تحديثاً للواجهة)
+    
+    // --- حالة استقبال سؤال ---
+    if (action.type === 'question') {
+        if (action.sender !== myPlayerNumber) {
+            // الخصم يسأل -> أظهر نافذة الإجابة
+            showAnswerModalUI(action.content);
+        } else {
+            // أنا سألت -> أظهر في السجل أنني أنتظر
+            addFeedback(`<strong>${textMap.youAsked}</strong> ${action.content} <br> <span style="font-size:0.8em; color:#ccc;">${textMap.waitingAnswer}</span>`, 'question-attempt');
+        }
+    }
+    
+    // --- حالة استقبال إجابة ---
+    else if (action.type === 'answer') {
+        const qaText = action.content; // "Question | Answer" stored or just answer? 
+        // لتبسيط الأمر، سنفترض أننا نعرف السؤال الأخير محلياً أو نرسله
+        // الأفضل: sendAction('answer', {q: question, a: answer})
+        
+        if (action.sender !== myPlayerNumber) {
+            // الخصم أجاب على سؤالي
+            addFeedback(`<strong>${textMap.opponentAnswered}</strong> ${action.content}`, 'question-attempt');
+            isMyTurn = true; // عاد الدور لي (أو للخصم؟ حسب القواعد. عادة السؤال ينقل الدور)
+            // *تصحيح*: في Guess Who، السائل يستمر إذا نعم؟ أم يتبدل؟
+            // في الكود الأصلي: يتبدل الدور دائماً
+            isMyTurn = true; // عاد الدور لي لأني سألت وهو أجاب؟ لا، الدور يتبدل
+            // انتظر، إذا هو أجاب، يعني أنا كنت أسأل. إذاً انتهى دوري.
+            // لكن إذا هو (المرسل للإجابة) يعني هو من سُئل.
+            // Sender of Answer = The one who was asked.
+            // So turn goes back to the Asker? Or allows Asker to continue?
+            // سنلتزم بالكود الأصلي: تبديل الدور بعد كل سؤال.
+            isMyTurn = true; 
+        } else {
+            // أنا أجبت -> يذهب الدور للخصم
+            isMyTurn = false;
+             addFeedback(`<strong>${textMap.youAsked}</strong> ... <strong>${textMap.opponentAnswered}</strong> ${action.content}`, 'question-attempt');
+        }
+        
+        // تبديل الدور منطقياً (بناء على عدد الأدوار إذا أردنا دقة، لكن هنا بسيط)
+        // إذا استقبلت إجابة (من الخصم)، يعني دوري انتهى سابقاً والآن يبدأ دوري الجديد؟
+        // لا، اللاعب 1 يسأل -> اللاعب 2 يجيب -> دور اللاعب 2.
+        if (action.sender !== myPlayerNumber) {
+             // الخصم أجاب (اللاعب 2)، يعني الآن دور اللاعب 2 ليسأل
+             isMyTurn = false; 
+        } else {
+             // أنا أجبت (اللاعب 2)، يعني الآن دوري لأسأل
+             isMyTurn = true;
+        }
+        
+        // *تعديل بسيط*: لنتجاهل التعقيد ونعتمد على:
+        // السائل يرسل Question -> المجيب يرسل Answer -> الدور ينتقل للمجيب ليصبح سائلاً.
+        if (action.sender === myPlayerNumber) {
+            isMyTurn = true; // أنا أجبت، الآن دوري
+        } else {
+            isMyTurn = false; // هو أجاب، الآن دوره
+        }
+        updateGameStatus();
+    }
+    
+    // --- حالة استقبال تخمين ---
+    else if (action.type === 'guess') {
+        if (action.sender !== myPlayerNumber) {
+            addFeedback(`${textMap.opponentAnswered} تخمين: ${action.content}`, 'guess-attempt');
+            // التحقق من الفوز يتم عبر المرسل، أو نرسل حدث End
+        }
+    }
+    
+    // --- حالة الفوز ---
+    else if (action.type === 'end') {
+        endGame(action.content.winner === myPlayerNumber, action.content.secret);
+    }
+}
+
+function showAnswerModalUI(questionText) {
+    const modal = document.getElementById('answer-modal');
+    const qText = document.getElementById('modal-question-text');
+    const btnYes = document.getElementById('btn-yes');
+    const btnNo = document.getElementById('btn-no');
+    const textMap = TEXTS[currentLang];
+
+    qText.textContent = `${textMap.incomingQuestion} "${questionText}"`;
+    btnYes.textContent = textMap.yes;
+    btnNo.textContent = textMap.no;
+    
+    modal.style.display = 'flex';
+
+    // تنظيف المستمعين القدامى
+    const newYes = btnYes.cloneNode(true);
+    const newNo = btnNo.cloneNode(true);
+    btnYes.parentNode.replaceChild(newYes, btnYes);
+    btnNo.parentNode.replaceChild(newNo, btnNo);
+
+    newYes.addEventListener('click', () => submitAnswer(textMap.yes));
+    newNo.addEventListener('click', () => submitAnswer(textMap.no));
+}
+
+function submitAnswer(answer) {
+    document.getElementById('answer-modal').style.display = 'none';
+    // إرسال الإجابة
+    sendAction('answer', answer);
+}
+
+
+// ====== 6. Game Flow Functions ======
 
 function updateUI() {
     const textMap = TEXTS[currentLang];
     elements.body.dir = (currentLang === 'العربية') ? 'rtl' : 'ltr';
-    
     elements.langToggle.textContent = textMap.langToggle;
     elements.title.textContent = textMap.title;
-    
     renderCategoryButtons();
-}
-
-function hideAllScreens() {
-    elements.mainMenuScreen.classList.add('hidden');
-    elements.categorySelectionScreen.classList.add('hidden');
-    elements.onlineWaitingScreen.classList.add('hidden');
-    elements.player1SetupScreen.classList.add('hidden');
-    elements.player2SetupScreen.classList.add('hidden');
-    elements.gameScreen.classList.add('hidden');
-    elements.resultScreen.classList.add('hidden');
-    elements.waitingOpponentScreen.classList.add('hidden');
 }
 
 function renderCategoryButtons() {
     const categories = GAME_DATA.categories[currentLang];
     elements.categoryButtonsContainer.innerHTML = '';
-
     for (const catName in categories) {
         const button = document.createElement('div');
         button.className = 'neon-button category-button';
         button.textContent = catName;
         button.dataset.category = catName;
-        
-        if (catName === selectedCategory) {
+        button.addEventListener('click', () => {
+            document.querySelectorAll('.category-button').forEach(b => b.classList.remove('selected'));
             button.classList.add('selected');
-        }
-
-        button.addEventListener('click', () => selectCategory(catName));
+            selectedCategory = catName;
+        });
         elements.categoryButtonsContainer.appendChild(button);
     }
 }
 
-function selectCategory(catName) {
-    selectedCategory = catName;
-    const buttons = elements.categoryButtonsContainer.querySelectorAll('.category-button');
-    buttons.forEach(btn => {
-        btn.classList.remove('selected');
-        if (btn.dataset.category === catName) {
-            btn.classList.add('selected');
-        }
-    });
+function hideAllScreens() {
+    const screens = document.querySelectorAll('.screen');
+    screens.forEach(s => s.classList.add('hidden'));
 }
 
-function toggleLanguage() {
-    currentLang = (currentLang === 'العربية') ? 'English' : 'العربية';
-    updateUI();
-}
-
-// ====== 6. وظائف اللعبة المحلية ======
-
+// بدء اللعبة المحلية
 function startLocalGame() {
     gameMode = 'local';
     myPlayerNumber = 1;
@@ -362,298 +424,211 @@ function startLocalGame() {
     elements.categorySelectionScreen.classList.remove('hidden');
 }
 
+// الانتقال بعد اختيار الفئة
 function startGameAfterCategory() {
-    if (!selectedCategory) {
-        alert(currentLang === 'العربية' ? "الرجاء اختيار فئة أولاً!" : "Please select a category first!");
-        return;
-    }
-
+    if (!selectedCategory && gameMode === 'local') return alert("Please select a category");
+    
     hideAllScreens();
-    elements.player1SetupScreen.classList.remove('hidden');
+    
+    if (gameMode === 'local') {
+        elements.player1SetupScreen.classList.remove('hidden');
+    } else {
+        // Online: Player 1 sets secret, Player 2 waits
+        if (myPlayerNumber === 1) {
+            elements.player1SetupScreen.classList.remove('hidden');
+        } else {
+            elements.waitingOpponentScreen.classList.remove('hidden');
+            elements.waitingMessage.textContent = TEXTS[currentLang].waitingOpponentSetup;
+        }
+    }
 }
 
-function player1SetSecret() {
+// إعداد السر للاعب 1
+async function player1SetSecret() {
     const secret = elements.player1SecretInput.value.trim();
-    if (!secret) {
-        alert(currentLang === 'العربية' ? "الرجاء إدخال العنصر أولاً!" : "Please enter an item first!");
-        return;
-    }
+    if (!secret) return;
     
     player1Secret = secret;
     elements.player1SecretInput.value = '';
-    
-    hideAllScreens();
-    elements.player2SetupScreen.classList.remove('hidden');
+
+    if (gameMode === 'local') {
+        hideAllScreens();
+        elements.player2SetupScreen.classList.remove('hidden');
+    } else {
+        // Online: Save to DB
+        const gameRef = dbRef(database, `games/${gameId}`);
+        await dbUpdate(gameRef, { p1Secret: secret });
+        
+        hideAllScreens();
+        elements.waitingOpponentScreen.classList.remove('hidden');
+        elements.waitingMessage.textContent = TEXTS[currentLang].waitingOpponent;
+    }
 }
 
-function player2SetSecret() {
+// إعداد السر للاعب 2
+async function player2SetSecret() {
     const secret = elements.player2SecretInput.value.trim();
-    if (!secret) {
-        alert(currentLang === 'العربية' ? "الرجاء إدخال العنصر أولاً!" : "Please enter an item first!");
-        return;
-    }
+    if (!secret) return;
     
     player2Secret = secret;
     elements.player2SecretInput.value = '';
-    
-    startGameScreen();
+
+    if (gameMode === 'local') {
+        startGameScreen();
+    } else {
+        const gameRef = dbRef(database, `games/${gameId}`);
+        await dbUpdate(gameRef, { p2Secret: secret });
+        // اللعبة ستبدأ تلقائياً عبر المستمع (Listener)
+        startGameScreen();
+    }
 }
 
 function startGameScreen() {
     hideAllScreens();
     elements.gameScreen.classList.remove('hidden');
     gameActive = true;
-    currentPlayerTurn = 1;
-    askedQuestions = [];
-    opponentAskedQuestions = [];
     updateGameStatus();
 }
 
 function updateGameStatus() {
     const textMap = TEXTS[currentLang];
-    const playerNum = currentPlayerTurn;
     
     if (gameMode === 'local') {
-        elements.currentPlayer.textContent = `${textMap.playerName(playerNum)}`;
-        if (currentPlayerTurn === 1) {
-            elements.playerStatus.textContent = `${textMap.currentTurn}`;
-        } else {
-            elements.playerStatus.textContent = `${textMap.currentTurn}`;
-        }
-    } else if (gameMode === 'online') {
-        if (isMyTurn) {
-            elements.currentPlayer.textContent = textMap.currentTurn;
-            elements.playerStatus.textContent = `${textMap.currentTurn}`;
-        } else {
-            elements.currentPlayer.textContent = textMap.waitingOpponent;
-            elements.playerStatus.textContent = textMap.waitingOpponent;
-        }
+        elements.currentPlayer.textContent = textMap.playerName(currentPlayerTurn);
+        elements.playerStatus.textContent = textMap.currentTurn;
+    } else {
+        // Online
+        elements.currentPlayer.textContent = isMyTurn ? textMap.currentTurn : textMap.waitingOpponent;
+        elements.playerStatus.style.color = isMyTurn ? '#e94560' : '#888';
+        
+        // تعطيل الإدخال إذا لم يكن دورك
+        elements.questionInput.disabled = !isMyTurn;
+        elements.askButton.disabled = !isMyTurn;
+        elements.guessInput.disabled = !isMyTurn;
+        elements.guessButton.disabled = !isMyTurn;
     }
     
-    updateAskedQuestionsDisplay();
     elements.questionInput.value = '';
     elements.guessInput.value = '';
 }
 
-function updateAskedQuestionsDisplay() {
-    const textMap = TEXTS[currentLang];
-    if (askedQuestions.length > 0) {
-        elements.askedQuestionsWarning.textContent = `${textMap.alreadyAsked} ${askedQuestions.join(', ')}`;
-        elements.askedQuestionsWarning.style.display = 'block';
-    } else {
-        elements.askedQuestionsWarning.style.display = 'none';
-    }
-}
-
-function addFeedback(message, type = 'default') {
-    const div = document.createElement('div');
-    div.className = `feedback-item ${type}`;
-    div.innerHTML = message;
-    elements.feedbackArea.prepend(div);
-}
-
 function handleQuestion() {
-    if (!gameActive || !isMyTurn) return;
-    
-    const question = elements.questionInput.value.trim().toLowerCase();
+    if (!gameActive) return;
+    if (gameMode === 'online' && !isMyTurn) return;
+
+    const question = elements.questionInput.value.trim();
     if (!question) return;
-    
-    const textMap = TEXTS[currentLang];
-    
-    // ✅ التحقق من تكرار السؤال
-    if (askedQuestions.some(q => q.toLowerCase() === question)) {
-        elements.duplicateWarning.textContent = textMap.duplicateQuestion;
+
+    // Check duplicate locally
+    if (askedQuestions.includes(question.toLowerCase())) {
         elements.duplicateWarning.style.display = 'block';
-        setTimeout(() => {
-            elements.duplicateWarning.style.display = 'none';
-        }, 3000);
+        setTimeout(() => elements.duplicateWarning.style.display = 'none', 2000);
         return;
     }
-    
-    // إضافة السؤال للقائمة
-    askedQuestions.push(question);
-    elements.duplicateWarning.style.display = 'none';
-    
-    // الحصول على إجابة
-    const answer = prompt(`${textMap.answerQuestion}\n"${question}"`);
-    
-    if (answer === null) return;
-    
-    addFeedback(`<strong>Q:</strong> ${question}<br><strong>A:</strong> ${answer}`, 'question-attempt');
-    
-    // تبديل اللاعب
+    askedQuestions.push(question.toLowerCase());
+
     if (gameMode === 'local') {
-        currentPlayerTurn = currentPlayerTurn === 1 ? 2 : 1;
-    } else if (gameMode === 'online') {
-        isMyTurn = false;
+        const answer = prompt(`${TEXTS[currentLang].answerQuestion}\n"${question}"`);
+        if (answer) {
+            addFeedback(`Q: ${question} <br> A: ${answer}`, 'question-attempt');
+            currentPlayerTurn = currentPlayerTurn === 1 ? 2 : 1;
+            updateGameStatus();
+        }
+    } else {
+        // Online: Send Question Event
+        sendAction('question', question);
+        isMyTurn = false; // انتظر الإجابة
+        updateGameStatus();
     }
-    
-    updateGameStatus();
-    elements.questionInput.value = '';
 }
 
 function handleGuess() {
-    if (!gameActive || !isMyTurn) return;
-    
+    if (!gameActive) return;
+    if (gameMode === 'online' && !isMyTurn) return;
+
     const guess = elements.guessInput.value.trim();
     if (!guess) return;
-    
-    const textMap = TEXTS[currentLang];
+
     let targetSecret = '';
-    
     if (gameMode === 'local') {
         targetSecret = currentPlayerTurn === 1 ? player2Secret : player1Secret;
-    } else if (gameMode === 'online') {
+    } else {
         targetSecret = myPlayerNumber === 1 ? player2Secret : player1Secret;
     }
-    
+
     if (guess.toLowerCase() === targetSecret.toLowerCase()) {
-        endGame(true);
-    } else {
-        addFeedback(`<strong>❌ ${textMap.wrongGuess}:</strong> "${guess}"`, 'guess-attempt');
-        
         if (gameMode === 'local') {
-            currentPlayerTurn = currentPlayerTurn === 1 ? 2 : 1;
-        } else if (gameMode === 'online') {
-            isMyTurn = false;
+            endGame(true, targetSecret);
+        } else {
+            // Online Win
+            sendAction('end', { winner: myPlayerNumber, secret: targetSecret });
         }
-        
-        updateGameStatus();
-        elements.guessInput.value = '';
+    } else {
+        // Wrong Guess
+        const textMap = TEXTS[currentLang];
+        if (gameMode === 'local') {
+            addFeedback(`${textMap.wrongGuess}: ${guess}`, 'guess-attempt');
+            currentPlayerTurn = currentPlayerTurn === 1 ? 2 : 1;
+            updateGameStatus();
+        } else {
+            sendAction('guess', guess);
+            isMyTurn = false; 
+            updateGameStatus();
+        }
     }
 }
 
-function endGame(isWin) {
+function addFeedback(html, type) {
+    const div = document.createElement('div');
+    div.className = `feedback-item ${type}`;
+    div.innerHTML = html;
+    elements.feedbackArea.prepend(div);
+}
+
+function endGame(isWin, secret) {
     gameActive = false;
     hideAllScreens();
     elements.resultScreen.classList.remove('hidden');
-    
     const textMap = TEXTS[currentLang];
-    let winner, winnerSecret;
     
-    if (gameMode === 'local') {
-        winner = currentPlayerTurn;
-        winnerSecret = currentPlayerTurn === 1 ? player1Secret : player2Secret;
-    } else if (gameMode === 'online') {
-        winner = myPlayerNumber;
-        winnerSecret = myPlayerNumber === 1 ? player1Secret : player2Secret;
+    if (isWin) {
+        elements.resultHeader.textContent = textMap.winHeader;
+        elements.resultMessage.textContent = textMap.winMessage;
+    } else {
+        elements.resultHeader.textContent = "Game Over"; // Or specific lose text
     }
-    
-    elements.resultHeader.textContent = textMap.winHeader;
-    elements.resultMessage.textContent = `${textMap.playerName(winner)} ${textMap.winMessage}`;
-    elements.resultDetails.textContent = `${textMap.guessingPlayer} ${winnerSecret}`;
+    elements.resultDetails.textContent = `${textMap.guessingPlayer} ${secret}`;
 }
 
 function restartGame() {
-    player1Secret = '';
-    player2Secret = '';
-    selectedCategory = '';
-    currentPlayerTurn = 1;
-    gameActive = false;
-    askedQuestions = [];
-    opponentAskedQuestions = [];
-    
-    // Stop listener before leaving
-    stopGameListener();
-    
-    if (gameMode === 'local') {
-        hideAllScreens();
-        elements.mainMenuScreen.classList.remove('hidden');
-        gameMode = null;
-    } else if (gameMode === 'online') {
-        hideAllScreens();
-        elements.mainMenuScreen.classList.remove('hidden');
-        gameMode = null;
-    }
+    location.reload(); // أسهل طريقة لإعادة تعيين كل شيء
 }
 
-// ====== 7. ربط الأحداث (Event Listeners) ======
+// ====== Events ======
+elements.langToggle.addEventListener('click', () => {
+    currentLang = currentLang === 'العربية' ? 'English' : 'العربية';
+    updateUI();
+});
 
-elements.langToggle.addEventListener('click', toggleLanguage);
-
-// Main Menu
 elements.localGameButton.addEventListener('click', startLocalGame);
 elements.onlineGameButton.addEventListener('click', async () => {
     gameMode = 'online';
     hideAllScreens();
     elements.onlineWaitingScreen.classList.remove('hidden');
-    try {
-        await createOnlineGame();
-    } catch (err) {
-        console.error(err);
-        alert('حدث خطأ أثناء إنشاء رمز اللعبة. تحقق من إعدادات Firebase.');
-        // return to menu
-        gameMode = null;
-        hideAllScreens();
-        elements.mainMenuScreen.classList.remove('hidden');
-    }
+    await createOnlineGame();
 });
 
-// Back buttons
-elements.backToMenuButton.addEventListener('click', () => {
-    hideAllScreens();
-    elements.mainMenuScreen.classList.remove('hidden');
-});
-
-elements.cancelOnlineButton.addEventListener('click', () => {
-    gameMode = null;
-    hideAllScreens();
-    elements.mainMenuScreen.classList.remove('hidden');
-});
-
-// Join Game
-elements.joinGameButton.addEventListener('click', async () => {
-    const opponentCode = elements.opponentCodeInput.value.trim();
-    if (!opponentCode) {
-        alert(TEXTS[currentLang].enterOpponentCode || "Please enter opponent's game code");
-        return;
-    }
-    try {
-        await joinGame(opponentCode);
-    } catch (err) {
-        console.error(err);
-    }
-});
-
-// Category Selection
+elements.joinGameButton.addEventListener('click', () => joinGame(elements.opponentCodeInput.value));
 elements.startPVPButton.addEventListener('click', startGameAfterCategory);
-
-// Player Setup
 elements.player1ConfirmButton.addEventListener('click', player1SetSecret);
 elements.player2ConfirmButton.addEventListener('click', player2SetSecret);
-
-// Game
 elements.askButton.addEventListener('click', handleQuestion);
-elements.questionInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') handleQuestion();
-});
-
 elements.guessButton.addEventListener('click', handleGuess);
-elements.guessInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') handleGuess();
-});
-
-// Result
 elements.restartButton.addEventListener('click', restartGame);
-
-// Copy Code
 elements.copyCodeButton.addEventListener('click', () => {
-    const input = document.getElementById('gameCodeInput');
-    const code = (input && input.value) ? input.value : elements.gameCodeDisplay.textContent;
-    if (!code) return;
-    navigator.clipboard.writeText(code).then(() => {
-        const button = elements.copyCodeButton;
-        const originalText = button.textContent;
-        button.textContent = TEXTS[currentLang].copying;
-        setTimeout(() => {
-            button.textContent = originalText;
-        }, 2000);
-    });
+    navigator.clipboard.writeText(elements.gameCodeDisplay.textContent);
+    alert("Copied!");
 });
 
-// ====== 8. التهيئة الأولية ======
-document.addEventListener('DOMContentLoaded', () => {
-    updateUI();
-    hideAllScreens();
-    elements.mainMenuScreen.classList.remove('hidden');
-});
+// Init
+updateUI();
