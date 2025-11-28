@@ -1,3 +1,7 @@
+// ====== 0. Firebase Modular imports (for browser modules) ======
+import { ref as dbRef, set as dbSet } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
+import { database } from "./firebase-config.js";
+
 // ====== 1. البيانات والتكوين ======
 const GAME_DATA = {
   "categories": {
@@ -83,6 +87,40 @@ let myPlayerNumber = 1;
 let gameId = null;
 let askedQuestions = []; // قائمة الأسئلة المسؤول عنها
 let opponentAskedQuestions = []; // قائمة أسئلة الخصم
+
+// ====== 4.5. Firebase helpers: generate game code + create game in DB ======
+function generateGameCode() {
+    // 6-character alphanumeric uppercase code
+    return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+async function createOnlineGame() {
+    try {
+        const gameCode = generateGameCode();
+        const gameRef = dbRef(database, `games/${gameCode}`);
+
+        // Basic initial game object - can be extended
+        await dbSet(gameRef, {
+            players: [],
+            questions: [],
+            createdAt: Date.now()
+        });
+
+        // Update UI elements: input and big display
+        const codeInput = document.getElementById('gameCodeInput');
+        const bigDisplay = document.getElementById('game-code');
+        if (codeInput) codeInput.value = gameCode;
+        if (bigDisplay) bigDisplay.textContent = gameCode;
+
+        // Remember current game id locally
+        gameId = gameCode;
+
+        return gameCode;
+    } catch (err) {
+        console.error('Error creating online game:', err);
+        throw err;
+    }
+}
 
 // ====== 4. العناصر الأساسية (DOM Elements) ======
 const elements = {
@@ -424,10 +462,20 @@ elements.langToggle.addEventListener('click', toggleLanguage);
 
 // Main Menu
 elements.localGameButton.addEventListener('click', startLocalGame);
-elements.onlineGameButton.addEventListener('click', () => {
+elements.onlineGameButton.addEventListener('click', async () => {
     gameMode = 'online';
     hideAllScreens();
     elements.onlineWaitingScreen.classList.remove('hidden');
+    try {
+        await createOnlineGame();
+    } catch (err) {
+        console.error(err);
+        alert('حدث خطأ أثناء إنشاء رمز اللعبة. تحقق من إعدادات Firebase.');
+        // return to menu
+        gameMode = null;
+        hideAllScreens();
+        elements.mainMenuScreen.classList.remove('hidden');
+    }
 });
 
 // Back buttons
@@ -465,7 +513,9 @@ elements.restartButton.addEventListener('click', restartGame);
 
 // Copy Code
 elements.copyCodeButton.addEventListener('click', () => {
-    const code = elements.gameCodeDisplay.textContent;
+    const input = document.getElementById('gameCodeInput');
+    const code = (input && input.value) ? input.value : elements.gameCodeDisplay.textContent;
+    if (!code) return;
     navigator.clipboard.writeText(code).then(() => {
         const button = elements.copyCodeButton;
         const originalText = button.textContent;
