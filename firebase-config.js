@@ -1,9 +1,9 @@
 // ====== Firebase Setup (Merged + Clean) ======
 
-// استيراد الـ SDK الحديثة
-import { initializeApp } from "firebase/app";
-import { getDatabase } from "firebase/database";
-import { getAnalytics } from "firebase/analytics";
+// استيراد الـ SDK الحديثة من CDN كنُسَخ Modules لتشغيلها في المتصفح
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+import { getDatabase } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-analytics.js";
 
 // إعدادات مشروعك (الحديثة فقط)
 const firebaseConfig = {
