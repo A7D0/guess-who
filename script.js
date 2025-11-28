@@ -1,5 +1,5 @@
 // ====== 0. Firebase Modular imports (for browser modules) ======
-import { ref as dbRef, set as dbSet, get as dbGet, update as dbUpdate } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
+import { ref as dbRef, set as dbSet, get as dbGet, update as dbUpdate, onValue as dbOnValue } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
 import { database } from "./firebase-config.js";
 
 // ====== 1. البيانات والتكوين ======
@@ -116,6 +116,9 @@ async function createOnlineGame() {
         gameId = gameCode;
         myPlayerNumber = 1;  // Creator is player 1
 
+        // Start real-time listener for 2nd player joining
+        listenToGameChanges(gameCode);
+
         return gameCode;
     } catch (err) {
         console.error('Error creating online game:', err);
@@ -165,6 +168,9 @@ async function joinGame(opponentCode) {
         gameId = code;
         elements.opponentCodeInput.value = '';
 
+        // Start real-time listener for opponent's moves
+        listenToGameChanges(code);
+
         // Move to category selection
         hideAllScreens();
         elements.categorySelectionScreen.classList.remove('hidden');
@@ -173,6 +179,54 @@ async function joinGame(opponentCode) {
     } catch (err) {
         console.error('Error joining game:', err);
         alert(currentLang === 'العربية' ? "حدث خطأ أثناء الانضمام للعبة" : "Error joining game");
+    }
+}
+
+// ====== 3.6. Firebase real-time listener for game changes ======
+let gameListener = null;  // Store listener reference for cleanup
+
+function listenToGameChanges(code) {
+    try {
+        const gameRef = dbRef(database, `games/${code}`);
+
+        // Remove old listener if exists
+        if (gameListener) gameListener();
+
+        // Set up real-time listener
+        gameListener = dbOnValue(gameRef, (snapshot) => {
+            const data = snapshot.val();
+            if (!data) return;
+
+            const players = data.players || {};
+            const playerCount = Object.keys(players).length;
+
+            console.log(`🎮 Game ${code}: ${playerCount} player(s) connected`);
+
+            // Auto-start when 2 players connected
+            if (playerCount >= 2 && gameMode === 'online') {
+                // Stop listening to avoid duplicate triggers
+                if (gameListener) gameListener();
+                
+                // Wait a bit for data sync, then proceed
+                setTimeout(() => {
+                    startGameAfterCategory();
+                }, 500);
+            }
+        }, (error) => {
+            console.error('Listener error:', error);
+        });
+
+    } catch (err) {
+        console.error('Error setting up listener:', err);
+    }
+}
+
+// ====== 3.7. Cleanup listener on game end ======
+function stopGameListener() {
+    if (gameListener) {
+        gameListener();
+        gameListener = null;
+        console.log('🎮 Game listener stopped');
     }
 }
 
@@ -498,6 +552,9 @@ function restartGame() {
     gameActive = false;
     askedQuestions = [];
     opponentAskedQuestions = [];
+    
+    // Stop listener before leaving
+    stopGameListener();
     
     if (gameMode === 'local') {
         hideAllScreens();
