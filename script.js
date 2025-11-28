@@ -200,7 +200,7 @@ function listenToGameChanges(code) {
     if (gameListener) gameListener();
 
     // Set up real-time listener
-    gameListener = dbOnValue(gameRef, (snapshot) => {
+    gameListener = dbOnValue(gameRef, async (snapshot) => {
         const data = snapshot.val();
         if (!data) return;
 
@@ -257,7 +257,7 @@ function listenToGameChanges(code) {
         }
 
         // 5. Place to add further turn/answers synchronization later
-        // 5. Turn and questions synchronization
+        // 5.1 Synchronize turn
         if (data.currentTurn) {
             const turnFromDB = data.currentTurn;
             if (gameMode === 'online') {
@@ -266,25 +266,86 @@ function listenToGameChanges(code) {
             }
         }
 
-        if (Array.isArray(data.questions)) {
-            const totalLocalQuestions = askedQuestions.length + opponentAskedQuestions.length;
-            if (data.questions.length > totalLocalQuestions) {
-                // Find truly new questions by text
-                const newQuestions = data.questions.filter(q => {
-                    return !askedQuestions.includes(q.question) && !opponentAskedQuestions.includes(q.question);
-                });
+        // 5.2 If it's my turn and there's a pending lastQuestion from opponent, prompt and answer
+        if (gameMode === 'online' && isMyTurn && data.lastQuestion && data.lastQuestion.player !== myPlayerNumber) {
+            const lastQ = data.lastQuestion;
 
-                if (newQuestions.length > 0) {
-                    newQuestions.forEach(q => {
-                        if (q.player === myPlayerNumber) {
-                            if (!askedQuestions.includes(q.question)) askedQuestions.push(q.question);
-                        } else {
-                            if (!opponentAskedQuestions.includes(q.question)) opponentAskedQuestions.push(q.question);
-                            addFeedback(`<strong>Q:</strong> ${q.question}<br><strong>A:</strong> ${q.answer} (من الخصم)`, 'opponent-question');
-                        }
-                    });
-                    updateAskedQuestionsDisplay();
+            // Prevent double answers
+            const lastLocalAnsweredQ = opponentAskedQuestions[opponentAskedQuestions.length - 1];
+            if (lastLocalAnsweredQ === lastQ.question) {
+                // already answered locally
+            } else {
+                const textMap = TEXTS[currentLang];
+                const answer = prompt(`${textMap.answerQuestion} (للرد على الخصم)\n"${lastQ.question}"`);
+
+                if (answer !== null) {
+                    try {
+                        const gameRef = dbRef(database, `games/${code}`);
+                        const existingQuestions = Array.isArray(data.questions) ? data.questions : [];
+
+                        const newQuestionEntry = {
+                            player: lastQ.player,
+                            question: lastQ.question,
+                            answer: answer,
+                            timestamp: lastQ.timestamp || Date.now()
+                        };
+
+                        const updatedQuestions = existingQuestions.concat(newQuestionEntry);
+
+                        // Next turn goes back to the original asker
+                        const nextTurn = lastQ.player;
+
+                        await dbUpdate(gameRef, {
+                            questions: updatedQuestions,
+                            currentTurn: nextTurn,
+                            lastQuestion: null
+                        });
+
+                        // Local UI updates for responder
+                        addFeedback(`<strong>Q:</strong> ${lastQ.question}<br><strong>A:</strong> ${answer} (ردي)`, 'question-response');
+                        if (!opponentAskedQuestions.includes(lastQ.question)) opponentAskedQuestions.push(lastQ.question);
+                        updateAskedQuestionsDisplay();
+                    } catch (err) {
+                        console.error('Error syncing answer/turn:', err);
+                    }
                 }
+            }
+        }
+
+        // 5.3 Use data.questions as the authoritative history of completed Q/A pairs
+        if (Array.isArray(data.questions)) {
+            const allLocalQuestions = [...askedQuestions, ...opponentAskedQuestions];
+            const newQuestions = data.questions.filter(q => !allLocalQuestions.includes(q.question));
+
+            if (newQuestions.length > 0) {
+                newQuestions.forEach(q => {
+                    if (q.player === myPlayerNumber) {
+                        // My previous question has been answered by opponent
+                        addFeedback(`<strong>Q:</strong> ${q.question}<br><strong>A:</strong> ${q.answer} (رد الخصم)`, 'opponent-question');
+                        if (!askedQuestions.includes(q.question)) askedQuestions.push(q.question);
+                    } else {
+                        // A question I answered (should already have been handled), but ensure it's tracked
+                        if (!opponentAskedQuestions.includes(q.question)) opponentAskedQuestions.push(q.question);
+                    }
+                });
+                updateAskedQuestionsDisplay();
+            }
+        }
+
+        // 6. Sync end-of-game and winner (if set by other player)
+        if (data.status === 'ended' && data.winner && gameActive) {
+            if (data.winner !== myPlayerNumber) {
+                // Opponent won — show result
+                gameActive = false;
+                hideAllScreens();
+                elements.resultScreen.classList.remove('hidden');
+
+                const textMap = TEXTS[currentLang];
+                elements.resultHeader.textContent = textMap.winHeader;
+                elements.resultMessage.textContent = `${textMap.playerName(data.winner)} ${textMap.winMessage}`;
+
+                const loserSecret = myPlayerNumber === 1 ? player1Secret : player2Secret;
+                elements.resultDetails.textContent = `${textMap.guessingPlayer} ${loserSecret}`;
             }
         }
     }, (error) => {
@@ -603,32 +664,27 @@ async function handleQuestion() {
 
     addFeedback(`<strong>Q:</strong> ${question}<br><strong>A:</strong> ${answer}`, 'question-attempt');
 
-    // 🛑 التزامن: عند اللعب أونلاين نرسل السؤال والإجابة ونعين الدور التالي في Firebase
+    // 🛑 التزامن: عند اللعب أونلاين نرسل السؤال إلى الخصم (lastQuestion) ونعين الدور التالي في Firebase
     if (gameMode === 'online' && gameId) {
         try {
             const gameRef = dbRef(database, `games/${gameId}`);
-            const snapshot = await dbGet(gameRef);
-            const data = snapshot.exists() ? snapshot.val() : {};
-            const existingQuestions = Array.isArray(data.questions) ? data.questions : [];
 
-            const newQuestionEntry = {
-                player: myPlayerNumber,
-                question: question,
-                answer: answer,
-                timestamp: Date.now()
-            };
-
+            // For online: publish lastQuestion so the responder gets prompted,
+            // and hand the turn to the opponent.
             const nextTurn = myPlayerNumber === 1 ? 2 : 1;
 
-            const updatedQuestions = existingQuestions.concat(newQuestionEntry);
-
             await dbUpdate(gameRef, {
-                questions: updatedQuestions,
+                lastQuestion: {
+                    player: myPlayerNumber,
+                    question: question,
+                    timestamp: Date.now()
+                },
                 currentTurn: nextTurn
             });
 
             // Locally switch turn state
             isMyTurn = false;
+            addFeedback(`<strong>Q:</strong> ${question} (في انتظار الرد...)`, 'question-attempt');
         } catch (err) {
             console.error('Error syncing question/turn:', err);
         }
@@ -656,6 +712,14 @@ function handleGuess() {
     }
     
     if (guess.toLowerCase() === targetSecret.toLowerCase()) {
+        // Correct guess
+        if (gameMode === 'online' && gameId) {
+            // Publish winner to Firebase
+            dbUpdate(dbRef(database, `games/${gameId}`), {
+                winner: myPlayerNumber,
+                status: 'ended'
+            }).catch(err => console.error('Error setting winner:', err));
+        }
         endGame(true);
     } else {
         addFeedback(`<strong>❌ ${textMap.wrongGuess}:</strong> "${guess}"`, 'guess-attempt');
@@ -663,7 +727,14 @@ function handleGuess() {
         if (gameMode === 'local') {
             currentPlayerTurn = currentPlayerTurn === 1 ? 2 : 1;
         } else if (gameMode === 'online') {
+            // Wrong guess: hand turn to opponent and persist it
             isMyTurn = false;
+            if (gameId) {
+                const nextTurn = myPlayerNumber === 1 ? 2 : 1;
+                dbUpdate(dbRef(database, `games/${gameId}`), {
+                    currentTurn: nextTurn
+                }).catch(err => console.error('Error switching turn after wrong guess:', err));
+            }
         }
         
         updateGameStatus();
