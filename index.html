@@ -5,9 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🎮 مَن في بالك؟ — Guess Who?</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Firebase -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js"></script>
 </head>
 <body>
     <button id="lang-toggle" class="neon-button">English</button>
@@ -37,6 +34,7 @@
             <div class="code-display">
                 <p>رمز اللعبة الخاص بك:</p>
                 <p id="game-code" class="game-code"></p>
+                <input id="gameCodeInput" readonly placeholder="رمز اللعبة يظهر هنا" style="width:100%; margin-top:10px; padding:8px; font-family: monospace; text-align:center;" />
                 <button id="copy-code-button" class="neon-button">نسخ الرمز</button>
             </div>
             <p style="margin: 20px 0;">أو أدخل رمز الخصم:</p>
@@ -98,7 +96,7 @@
         </div>
     </div>
 
-    <script src="firebase-config.js"></script>
-    <script src="script.js"></script>
+    <script type="module" src="firebase-config.js"></script>
+    <script type="module" src="script.js"></script>
 </body>
 </html>
