@@ -153,34 +153,32 @@ async function joinGame(opponentCode) {
             return;
         }
 
-        // Add current player
-        myPlayerNumber = playerCount + 1;  // Player 1 or 2
+        // Prepare new player entry (compute but do not overwrite globals yet)
+        const newPlayerNumber = playerCount + 1;  // 1 or 2
         const playerId = `player${Date.now()}`;
         players[playerId] = {
-            playerNumber: myPlayerNumber,
+            playerNumber: newPlayerNumber,
             joinedAt: Date.now()
         };
 
-        // Update players in the game
+        // 🛑 MUST await update so host sees the new player immediately
         await dbUpdate(gameRef, { players });
 
-        // Set game id and proceed
+        // Set local state after DB update
         gameId = code;
+        myPlayerNumber = newPlayerNumber;
         elements.opponentCodeInput.value = '';
 
-        // Start real-time listener for opponent's moves
+        // Start real-time listener AFTER the DB update so it catches the change immediately
         listenToGameChanges(code);
 
-        // ✅ FIX: Do NOT move player 2 directly to category selection here.
-        // Show the waiting lobby — the realtime listener will advance both players
+        // Show waiting lobby; listener will move the UI forward when appropriate
         hideAllScreens();
         elements.onlineWaitingScreen.classList.remove('hidden');
 
-        // show the game code and hide copy button to avoid UI clutter
         if (elements.gameCodeDisplay) elements.gameCodeDisplay.textContent = code;
         if (elements.copyCodeButton) elements.copyCodeButton.style.display = 'none';
 
-        // update waiting header safely (if an id exists) or fallback to screen's H2
         const headerEl = document.getElementById('online-waiting-header') || elements.onlineWaitingScreen.querySelector('h2');
         if (headerEl) headerEl.textContent = (currentLang === 'العربية') ? "في انتظار تزامن اللعبة..." : "Waiting for game sync...";
 
@@ -214,8 +212,8 @@ function listenToGameChanges(code) {
 
         // 1. Move from waiting lobby to category selection when 2 players connected
         if (playerCount >= 2 && !data.selectedCategory && gameMode === 'online') {
-            // If client still on waiting screen, show category selection
-            if (!elements.onlineWaitingScreen.classList.contains('hidden')) {
+            // If client still on waiting screen or still on main menu, show category selection
+            if (!elements.onlineWaitingScreen.classList.contains('hidden') || !elements.mainMenuScreen.classList.contains('hidden')) {
                 hideAllScreens();
                 elements.categorySelectionScreen.classList.remove('hidden');
             }
@@ -259,7 +257,36 @@ function listenToGameChanges(code) {
         }
 
         // 5. Place to add further turn/answers synchronization later
+        // 5. Turn and questions synchronization
+        if (data.currentTurn) {
+            const turnFromDB = data.currentTurn;
+            if (gameMode === 'online') {
+                isMyTurn = (myPlayerNumber === turnFromDB);
+                updateGameStatus();
+            }
+        }
 
+        if (Array.isArray(data.questions)) {
+            const totalLocalQuestions = askedQuestions.length + opponentAskedQuestions.length;
+            if (data.questions.length > totalLocalQuestions) {
+                // Find truly new questions by text
+                const newQuestions = data.questions.filter(q => {
+                    return !askedQuestions.includes(q.question) && !opponentAskedQuestions.includes(q.question);
+                });
+
+                if (newQuestions.length > 0) {
+                    newQuestions.forEach(q => {
+                        if (q.player === myPlayerNumber) {
+                            if (!askedQuestions.includes(q.question)) askedQuestions.push(q.question);
+                        } else {
+                            if (!opponentAskedQuestions.includes(q.question)) opponentAskedQuestions.push(q.question);
+                            addFeedback(`<strong>Q:</strong> ${q.question}<br><strong>A:</strong> ${q.answer} (من الخصم)`, 'opponent-question');
+                        }
+                    });
+                    updateAskedQuestionsDisplay();
+                }
+            }
+        }
     }, (error) => {
         console.error('Listener error:', error);
     });
@@ -547,14 +574,14 @@ function addFeedback(message, type = 'default') {
     elements.feedbackArea.prepend(div);
 }
 
-function handleQuestion() {
+async function handleQuestion() {
     if (!gameActive || !isMyTurn) return;
-    
+
     const question = elements.questionInput.value.trim().toLowerCase();
     if (!question) return;
-    
+
     const textMap = TEXTS[currentLang];
-    
+
     // ✅ التحقق من تكرار السؤال
     if (askedQuestions.some(q => q.toLowerCase() === question)) {
         elements.duplicateWarning.textContent = textMap.duplicateQuestion;
@@ -564,25 +591,51 @@ function handleQuestion() {
         }, 3000);
         return;
     }
-    
-    // إضافة السؤال للقائمة
-    askedQuestions.push(question);
+
+    // إضافة السؤال للقائمة (محلياً)
+    if (!askedQuestions.includes(question)) askedQuestions.push(question);
     elements.duplicateWarning.style.display = 'none';
-    
+
     // الحصول على إجابة
     const answer = prompt(`${textMap.answerQuestion}\n"${question}"`);
-    
+
     if (answer === null) return;
-    
+
     addFeedback(`<strong>Q:</strong> ${question}<br><strong>A:</strong> ${answer}`, 'question-attempt');
-    
-    // تبديل اللاعب
-    if (gameMode === 'local') {
+
+    // 🛑 التزامن: عند اللعب أونلاين نرسل السؤال والإجابة ونعين الدور التالي في Firebase
+    if (gameMode === 'online' && gameId) {
+        try {
+            const gameRef = dbRef(database, `games/${gameId}`);
+            const snapshot = await dbGet(gameRef);
+            const data = snapshot.exists() ? snapshot.val() : {};
+            const existingQuestions = Array.isArray(data.questions) ? data.questions : [];
+
+            const newQuestionEntry = {
+                player: myPlayerNumber,
+                question: question,
+                answer: answer,
+                timestamp: Date.now()
+            };
+
+            const nextTurn = myPlayerNumber === 1 ? 2 : 1;
+
+            const updatedQuestions = existingQuestions.concat(newQuestionEntry);
+
+            await dbUpdate(gameRef, {
+                questions: updatedQuestions,
+                currentTurn: nextTurn
+            });
+
+            // Locally switch turn state
+            isMyTurn = false;
+        } catch (err) {
+            console.error('Error syncing question/turn:', err);
+        }
+    } else if (gameMode === 'local') {
         currentPlayerTurn = currentPlayerTurn === 1 ? 2 : 1;
-    } else if (gameMode === 'online') {
-        isMyTurn = false;
     }
-    
+
     updateGameStatus();
     elements.questionInput.value = '';
 }
