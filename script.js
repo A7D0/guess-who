@@ -1,5 +1,5 @@
 // ====== 0. Firebase Modular imports (for browser modules) ======
-import { ref as dbRef, set as dbSet } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
+import { ref as dbRef, set as dbSet, get as dbGet, update as dbUpdate } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
 import { database } from "./firebase-config.js";
 
 // ====== 1. البيانات والتكوين ======
@@ -99,9 +99,9 @@ async function createOnlineGame() {
         const gameCode = generateGameCode();
         const gameRef = dbRef(database, `games/${gameCode}`);
 
-        // Basic initial game object - can be extended
+        // Initialize room with players object (empty initially)
         await dbSet(gameRef, {
-            players: [],
+            players: {},           // Important: initialize as empty object, not array
             questions: [],
             createdAt: Date.now()
         });
@@ -114,11 +114,65 @@ async function createOnlineGame() {
 
         // Remember current game id locally
         gameId = gameCode;
+        myPlayerNumber = 1;  // Creator is player 1
 
         return gameCode;
     } catch (err) {
         console.error('Error creating online game:', err);
         throw err;
+    }
+}
+
+// ====== 3.5. Firebase join game function ======
+async function joinGame(opponentCode) {
+    try {
+        const code = opponentCode.trim().toUpperCase();
+        if (!code) {
+            alert(TEXTS[currentLang].enterOpponentCode || "Please enter opponent's game code");
+            return;
+        }
+
+        const gameRef = dbRef(database, `games/${code}`);
+        const snapshot = await dbGet(gameRef);
+
+        if (!snapshot.exists()) {
+            alert(currentLang === 'العربية' ? "رمز اللعبة غير صحيح!" : "Invalid game code!");
+            return;
+        }
+
+        const gameData = snapshot.val();
+        const players = gameData.players || {};
+        const playerCount = Object.keys(players).length;
+
+        // Only allow 2 players max
+        if (playerCount >= 2) {
+            alert(currentLang === 'العربية' ? "العبة ممتلئة بالفعل!" : "Game is full!");
+            return;
+        }
+
+        // Add current player
+        myPlayerNumber = playerCount + 1;  // Player 1 or 2
+        const playerId = `player${Date.now()}`;
+        players[playerId] = {
+            playerNumber: myPlayerNumber,
+            joinedAt: Date.now()
+        };
+
+        // Update players in the game
+        await dbUpdate(gameRef, { players });
+
+        // Set game id and proceed
+        gameId = code;
+        elements.opponentCodeInput.value = '';
+
+        // Move to category selection
+        hideAllScreens();
+        elements.categorySelectionScreen.classList.remove('hidden');
+
+        return code;
+    } catch (err) {
+        console.error('Error joining game:', err);
+        alert(currentLang === 'العربية' ? "حدث خطأ أثناء الانضمام للعبة" : "Error joining game");
     }
 }
 
@@ -488,6 +542,20 @@ elements.cancelOnlineButton.addEventListener('click', () => {
     gameMode = null;
     hideAllScreens();
     elements.mainMenuScreen.classList.remove('hidden');
+});
+
+// Join Game
+elements.joinGameButton.addEventListener('click', async () => {
+    const opponentCode = elements.opponentCodeInput.value.trim();
+    if (!opponentCode) {
+        alert(TEXTS[currentLang].enterOpponentCode || "Please enter opponent's game code");
+        return;
+    }
+    try {
+        await joinGame(opponentCode);
+    } catch (err) {
+        console.error(err);
+    }
 });
 
 // Category Selection
