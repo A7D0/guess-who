@@ -1,0 +1,213 @@
+:root {
+    /* الألوان المطلوبة */
+    --background-color: #1a1a2e; /* داكن */
+    --neon-pink: #e94560; /* نيون وردي */
+    --text-color: #ffffff; /* أبيض */
+    --dark-pink: #bc364a;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif; /* يمكن استبداله بخط عربي أجمل */
+}
+
+body {
+    background-color: var(--background-color);
+    color: var(--text-color);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start; /* تغيير لـ flex-start لمنع تداخل المحتوى */
+    min-height: 100vh;
+    padding: 20px;
+    direction: rtl; /* دعم اللغة العربية الافتراضي */
+}
+
+.container {
+    width: 100%;
+    max-width: 600px; /* تحديد أقصى عرض ليكون متجاوباً */
+    background-color: rgba(0, 0, 0, 0.3); /* طبقة شفافة خفيفة */
+    padding: 30px;
+    border-radius: 15px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    text-align: center;
+}
+
+h1 {
+    color: var(--neon-pink);
+    margin-bottom: 20px;
+    text-shadow: 0 0 10px var(--neon-pink); /* تأثير النيون على العنوان */
+}
+
+h2, h3 {
+    margin-bottom: 15px;
+}
+
+/* الأزرار و الـ Neon Style */
+.neon-button {
+    background-color: var(--neon-pink);
+    color: var(--text-color);
+    border: none;
+    padding: 12px 25px;
+    margin: 8px;
+    border-radius: 8px;
+    font-size: 1em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 0 10px var(--neon-pink), 0 0 20px var(--dark-pink);
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.neon-button:hover {
+    background-color: var(--dark-pink);
+    box-shadow: 0 0 15px var(--neon-pink), 0 0 30px var(--neon-pink);
+    transform: translateY(-2px);
+}
+
+/* زر تبديل اللغة في الزاوية */
+#lang-toggle {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    padding: 8px 15px;
+    font-size: 0.9em;
+    margin: 0;
+}
+
+/* تخطيط الأزرار للفئات */
+.button-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.category-button {
+    background-color: var(--dark-pink);
+    padding: 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.category-button.selected {
+    background-color: var(--neon-pink);
+    box-shadow: 0 0 8px var(--neon-pink);
+}
+
+/* حقول الإدخال */
+input[type="text"] {
+    width: calc(100% - 20px);
+    padding: 10px;
+    margin: 10px 0;
+    border: 2px solid var(--neon-pink);
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--text-color);
+    border-radius: 5px;
+    font-size: 1em;
+}
+
+/* مناطق عرض المحتوى */
+.screen.hidden, #game-area.hidden, #player1-setup.hidden {
+    display: none;
+}
+
+.separator {
+    margin: 20px 0;
+    font-style: italic;
+    color: #ccc;
+}
+
+.feedback-box {
+    margin-top: 15px;
+    padding: 15px;
+    border: 1px solid var(--neon-pink);
+    border-radius: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    text-align: right;
+    background-color: rgba(0, 0, 0, 0.2);
+}
+
+.feedback-item {
+    padding: 5px 0;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.feedback-item:last-child {
+    border-bottom: none;
+}
+
+.guess-attempt {
+    font-weight: bold;
+    color: orange;
+}
+
+.question-attempt {
+    color: #b3e0ff;
+}
+
+/* التجاوب (Responsive) */
+@media (max-width: 480px) {
+    .container {
+        padding: 20px;
+    }
+    .neon-button {
+        width: 100%;
+        margin: 5px 0;
+    }
+}
+
+/* Neon Secondary Button */
+.neon-button.secondary {
+    background-color: transparent;
+    border: 2px solid var(--neon-pink);
+}
+
+.neon-button.secondary:hover {
+    background-color: rgba(233, 69, 96, 0.2);
+}
+
+/* Game Code Display */
+.code-display {
+    padding: 20px;
+    background-color: rgba(0, 0, 0, 0.3);
+    border: 2px solid var(--neon-pink);
+    border-radius: 8px;
+    margin: 15px 0;
+}
+
+.game-code {
+    font-size: 2em;
+    font-weight: bold;
+    color: var(--neon-pink);
+    margin: 10px 0;
+    font-family: 'Courier New', monospace;
+    letter-spacing: 2px;
+}
+
+/* Spinner Animation */
+.spinner {
+    border: 4px solid rgba(233, 69, 96, 0.3);
+    border-top: 4px solid var(--neon-pink);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 20px auto;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Question Section */
+.question-section {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+}

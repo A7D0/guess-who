@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎮 مَن في بالك؟ — Guess Who?</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js"></script>
+</head>
+<body>
+    <button id="lang-toggle" class="neon-button">English</button>
+
+    <div class="container">
+        <h1 id="title">🎮 مَن في بالك؟</h1>
+
+        <!-- Main Menu Screen -->
+        <div id="main-menu-screen" class="screen">
+            <h2>اختر وضع اللعب</h2>
+            <p style="margin-bottom: 20px;">اختر كيف تريد أن تلعب</p>
+            <button id="local-game-button" class="neon-button">لعبة محلية 👥</button>
+            <button id="online-game-button" class="neon-button">لعبة أون لاين 🌐</button>
+        </div>
+
+        <!-- Category Selection Screen (Local & Online) -->
+        <div id="category-selection" class="screen hidden">
+            <h2 id="cat-header">اختر فئة اللعب:</h2>
+            <div id="category-buttons" class="button-grid"></div>
+            <button id="start-pvp-button" class="neon-button">بدء اللعبة</button>
+            <button id="back-to-menu-button" class="neon-button secondary">عودة</button>
+        </div>
+
+        <!-- Online Waiting Screen -->
+        <div id="online-waiting-screen" class="screen hidden">
+            <h2>انتظار خصم</h2>
+            <div class="code-display">
+                <p>رمز اللعبة الخاص بك:</p>
+                <p id="game-code" class="game-code"></p>
+                <button id="copy-code-button" class="neon-button">نسخ الرمز</button>
+            </div>
+            <p style="margin: 20px 0;">أو أدخل رمز الخصم:</p>
+            <input type="text" id="opponent-code-input" placeholder="أدخل رمز الخصم">
+            <button id="join-game-button" class="neon-button">انضم للعبة</button>
+            <button id="cancel-online-button" class="neon-button secondary">إلغاء</button>
+        </div>
+
+        <!-- Player 1 Setup Screen -->
+        <div id="player1-setup-screen" class="screen hidden">
+            <h2 id="p1-header">اللاعب الأول - أدخل عنصرك</h2>
+            <p id="p1-instruction">اكتب العنصر أو الشخصية التي تريد أن يخمنها الخصم:</p>
+            <input type="text" id="player1-secret-input" placeholder="اكتب عنصرك السري">
+            <button id="player1-confirm-button" class="neon-button">تم!</button>
+        </div>
+
+        <!-- Player 2 Setup Screen -->
+        <div id="player2-setup-screen" class="screen hidden">
+            <h2 id="p2-header">اللاعب الثاني - أدخل عنصرك</h2>
+            <p id="p2-instruction">الآن دورك. اكتب العنصر أو الشخصية:</p>
+            <input type="text" id="player2-secret-input" placeholder="اكتب عنصرك السري">
+            <button id="player2-confirm-button" class="neon-button">تم! ابدأ اللعبة</button>
+        </div>
+
+        <!-- Game Screen -->
+        <div id="game-screen" class="screen hidden">
+            <h2 id="game-header">اللعبة قيد الجريان</h2>
+            <p id="current-player">دورك</p>
+            <p id="player-status"></p>
+            <p id="asked-questions-warning" style="color: #ffc107; font-size: 0.9em; display: none;"></p>
+
+            <div class="question-section">
+                <p id="instruction-text">اسأل سؤال نعم/لا:</p>
+                <input type="text" id="question-input" placeholder="اكتب سؤالك...">
+                <button id="ask-button" class="neon-button">اسأل</button>
+                <p id="duplicate-warning" style="color: #ff6b6b; display: none;"></p>
+            </div>
+
+            <div class="separator">أو قم بتخمين مباشر:</div>
+            <input type="text" id="guess-input" placeholder="خمّن العنصر...">
+            <button id="guess-button" class="neon-button">تخمين</button>
+
+            <div id="feedback-area" class="feedback-box"></div>
+        </div>
+
+        <!-- Result Screen -->
+        <div id="result-screen" class="screen hidden">
+            <h2 id="result-header"></h2>
+            <p id="result-message"></p>
+            <p id="result-details"></p>
+            <button id="restart-button" class="neon-button">ابدأ جولة جديدة</button>
+        </div>
+
+        <!-- Waiting for Opponent Screen -->
+        <div id="waiting-opponent-screen" class="screen hidden">
+            <h2>انتظار الخصم...</h2>
+            <p id="waiting-message">ينتظر الخصم لإدخال عنصره السري</p>
+            <div class="spinner"></div>
+        </div>
+    </div>
+
+    <script src="firebase-config.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
