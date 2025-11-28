@@ -257,23 +257,29 @@ function listenToGameChanges(code) {
         }
 
         // 5. Place to add further turn/answers synchronization later
-        // 5.1 Synchronize turn
-        if (data.currentTurn) {
+        // 5.1 Synchronize turn (authoritative source from Firebase)
+        // This ensures each player knows if it's their turn
+        if (data.currentTurn !== undefined && data.currentTurn !== null) {
             const turnFromDB = data.currentTurn;
             if (gameMode === 'online') {
-                isMyTurn = (myPlayerNumber === turnFromDB);
-                updateGameStatus();
+                const newIsMyTurn = (myPlayerNumber === turnFromDB);
+                // Only update if turn state changed to avoid unnecessary re-renders
+                if (newIsMyTurn !== isMyTurn) {
+                    isMyTurn = newIsMyTurn;
+                    updateGameStatus();
+                }
             }
         }
 
         // 5.2 If it's my turn and there's a pending lastQuestion from opponent, prompt and answer
+        // 🛡️ Guard: Only responder (whose turn it is) should answer question from opponent
         if (gameMode === 'online' && isMyTurn && data.lastQuestion && data.lastQuestion.player !== myPlayerNumber) {
             const lastQ = data.lastQuestion;
 
-            // Prevent double answers
+            // Prevent double answers by checking if we've already answered THIS question
             const lastLocalAnsweredQ = opponentAskedQuestions[opponentAskedQuestions.length - 1];
             if (lastLocalAnsweredQ === lastQ.question) {
-                // already answered locally
+                // already answered locally — do NOT prompt again
             } else {
                 const textMap = TEXTS[currentLang];
                 const answer = prompt(`${textMap.answerQuestion} (للرد على الخصم)\n"${lastQ.question}"`);
@@ -304,6 +310,10 @@ function listenToGameChanges(code) {
                         // Local UI updates for responder
                         addFeedback(`<strong>Q:</strong> ${lastQ.question}<br><strong>A:</strong> ${answer} (ردي)`, 'question-response');
                         if (!opponentAskedQuestions.includes(lastQ.question)) opponentAskedQuestions.push(lastQ.question);
+                        
+                        // 💡 CRITICAL: Set responder's isMyTurn to false IMMEDIATELY after answering
+                        // This prevents further prompts and ensures clean turn handoff to questioner
+                        isMyTurn = false;
                         updateAskedQuestionsDisplay();
                     } catch (err) {
                         console.error('Error syncing answer/turn:', err);
